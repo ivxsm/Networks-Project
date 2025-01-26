@@ -35,6 +35,7 @@ def verify_checksum(file, received_checksum):
  
 def main():
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+    print(f"Connecting to the server {Server_IP} : {Server_PORT} ...")
     client.connect(Address) 
     
     file_name = input("Enter the file name: ").strip()
