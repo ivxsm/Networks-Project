@@ -1,4 +1,5 @@
 import socket  as scoket
+import struct
 
 
 IP = scoket.gethostbyname(scoket.gethostname()) # Get the IP address of the server
