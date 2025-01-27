@@ -2,11 +2,10 @@ import socket
 import struct
 
 # Constants
-Server_IP = socket.gethostbyname(socket.gethostname())  # Automatically get the local IP address
-#Server_IP =  # real ip address uncomment and 
+Server_IP = '127.0.0.1'  # Server's IP
 Server_PORT = 4000
 Address = (Server_IP, Server_PORT)  # Tuple of the IP and the PORT
-Buffer_Size = 1024  # Buffer size for sending/receiving data
+Buffer_Size = 1024  # For sending/receiving data
 Fragment_Size = 4  # Number of fragments
 
 # Function to calculate checksum
@@ -30,61 +29,68 @@ def main():
     print(f"Connecting to the server {Server_IP} : {Server_PORT} ...")
     client.connect(Address)
 
-    while True:
-        file_name = input("Enter the file name (or 'exit' to quit): ").strip()
-        client.send(file_name.encode())
-
-        if file_name.lower() == "exit":
-            print("Exiting...")
-            break
-
-        fragments = [None] * Fragment_Size
-
+    try:
         while True:
-            data = client.recv(Buffer_Size)
-            if not data:
+            file_name = input("Enter the file name (or 'exit' to quit): ").strip()
+            client.send(file_name.encode())
+
+            if file_name.lower() == "exit":
+                print("Exiting...")
                 break
 
-            if data == b"EOF":
-                print("File transfer completed successfully.")
-                break
+            fragments = [None] * Fragment_Size
 
-            # Check for server messages
-            if data.startswith(b"File not found"):
-                print("File not found on the server")
-                break
-            elif data.startswith(b"File sent successfully"):
-                print("File transfer completed successfully.")
-                break
-            elif data.startswith(b"Transmission failed"):
-                print("File transfer failed. The server could not send the file.")
-                break
+            while True:
+                data = client.recv(Buffer_Size)
+                if not data:
+                    break
 
-            # Unpack the header and fragment data
-            header = data[:4]
-            seq_num, checksum = struct.unpack("!HH", header)
-            fragment_data = data[4:]
+                if data == b"EOF":
+                    print("File transfer completed successfully.")
+                    client.send(b"Completed")  # Let server know client finished
+                    break
 
-            # Verify the checksum
-            if verify_checksum(fragment_data, checksum):
-                print(f"Received fragment {seq_num}")
-                if fragments[seq_num] is None:  # Avoid duplicate processing
-                    fragments[seq_num] = fragment_data
-                client.send(f"ACK:{seq_num}".encode())  # Send ACK to the server
+                # Check for server messages
+                if data.startswith(b"File not found"):
+                    print("File not found on the server")
+                    break
+                elif data.startswith(b"File sent successfully"):
+                    print("File transfer completed successfully.")
+                    client.send(b"Completed")  # Let server know client finished
+                    break
+                elif data.startswith(b"Transmission failed"):
+                    print("File transfer failed. The server could not send the file.")
+                    break
+
+                # Unpack the header and fragment data
+                header = data[:4]
+                seq_num, checksum = struct.unpack("!HH", header)
+                fragment_data = data[4:]
+
+                # Verify the checksum
+                if verify_checksum(fragment_data, checksum):
+                    print(f"Received fragment {seq_num}")
+                    if fragments[seq_num] is None:  # Avoid duplicate processing
+                        fragments[seq_num] = fragment_data
+                    client.send(f"ACK:{seq_num}".encode())  # Send ACK to the server
+                else:
+                    print(f"Fragment {seq_num} is corrupted.")
+                    client.send(f"NACK:{seq_num}".encode())  # Send NACK to the server
+
+            # Check if all fragments are received
+            if all(fragment is not None for fragment in fragments):
+                file_data = b"".join(fragments)  # Combine all fragments
+                with open(f"received_{file_name}", "wb") as file:
+                    file.write(file_data)
+                print(f"File '{file_name}' reassembled and saved as 'received_{file_name}'.")
             else:
-                print(f"Fragment {seq_num} is corrupted.")
-                client.send(f"NACK:{seq_num}".encode())  # Send NACK to the server
+                print("File transfer incomplete. Some fragments are missing.")
 
-        # Check if all fragments are received
-        if all(fragment is not None for fragment in fragments):
-            file_data = b"".join(fragments)  # Combine all fragments
-            with open(f"received_{file_name}", "wb") as file:
-                file.write(file_data)
-            print(f"File '{file_name}' reassembled and saved as 'received_{file_name}'.")
-        else:
-            print("File transfer incomplete. Some fragments are missing.")
-
-    client.close()
+    except Exception as e:
+        print(f"Error occurred: {e}")
+    finally:
+        print("Closing connection to the server.")
+        client.close()
 
 if __name__ == "__main__":
     main()
