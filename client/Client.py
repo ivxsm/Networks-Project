@@ -1,19 +1,15 @@
-import socket
+import socket as socket
 import struct
-import os
-from threading import Thread
 
 # Constants
 Server_IP = '127.0.0.1'  # Get the IP address of the server
-Server_PORT = 4000
+Server_PORT = 39996
 Address = (Server_IP, Server_PORT)  # Tuple of the IP and the PORT
 Buffer_Size = 1024  # for sending/receiving data
 Fragment_Size = 4  # the fragment (segment) number.
-Min_File_Size = 1  # the minimum size of the file
-Max_retry = 5  # the maximum number of retries
 
 # Function to calculate checksum
-def checksum(file):
+def calc_checksum(file):
     if len(file) % 2 != 0:
         file += b'\0'
     checksum = 0
@@ -23,86 +19,72 @@ def checksum(file):
         checksum = (checksum & 0xffff) + (checksum >> 16)
     return ~checksum & 0xffff
 
-# Function to split the file into segments
-def split_file(file):
-    file_data = open(file, "rb").read()  # read the file in binary mode
-    file_size = os.path.getsize(file)  # get the size of the file
-    inner_fragment_Size = file_size // Fragment_Size  # the size of each segment
-    segments = []  # list to store the segments
-
-    for i in range(Fragment_Size):
-        start = i * inner_fragment_Size
-        end = (i + 1) * inner_fragment_Size if i != Fragment_Size - 1 else file_size
-        fragment = file_data[start:end]
-        checksum_value = checksum(fragment)
-        segments.append((i, checksum_value, fragment))
-    return segments
-
-# Function to handle each client connection
-def handle_client(client_socket, client_address):
-    print(f"Connection from {client_address} has been established!")
-    client_socket.send("Welcome to the server!".encode())
-
-    while True:
-        file = client_socket.recv(Buffer_Size).decode().strip()  # receive the file name
-        if file.lower() == "exit":
-            print(f"Client {client_address} requested to exit.")
-            break
-
-        print(f"Client requested: {file}")
-
-        if not os.path.exists(file):
-            client_socket.send("File not found".encode())
-            print(f"File {file} not found")
-            continue
-
-        file_size = os.path.getsize(file)
-        if file_size < Min_File_Size:
-            client_socket.send(f"File is too small ({file_size} bytes), it must be at least {Min_File_Size} bytes".encode())
-            print(f"File is too small ({file_size} bytes), it must be at least {Min_File_Size} bytes")
-            continue
-
-        fragments = split_file(file)
-        for seq_num, checksum_value, fragment in fragments:
-            retry = 0
-            while retry < Max_retry:
-                header = struct.pack("!HH", seq_num, checksum_value)  # Pack sequence number and checksum
-                message = header + fragment
-                client_socket.send(message)
-                print(f"Sent fragment {seq_num} with checksum {checksum_value}")
-
-                ack = client_socket.recv(Buffer_Size).decode().strip()
-                if ack == f"ACK:{seq_num}":
-                    print(f"Fragment {seq_num} acknowledged by the client")
-                    break
-                else:
-                    retry += 1
-                    print(f'Fragment {seq_num} not acknowledged by the client, retrying {retry} of {Max_retry}')
-
-            if retry == Max_retry:
-                print(f"Fragment {seq_num} not acknowledged by the client, maximum retries reached")
-                client_socket.send('Transmission failed'.encode())
-                client_socket.close()
-                return
-
-        print(f"File {file} sent successfully")
-        client_socket.send("File sent successfully".encode())
-
-    print(f"Closing connection with {client_address}")
-    client_socket.close()
+# Function to verify checksum
+def verify_checksum(file, received_checksum):
+    calculated_checksum = calc_checksum(file)
+    return calculated_checksum == received_checksum
 
 def main():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(Address)
-    server.listen(5)  # Allow up to 5 clients to queue
-    print(f"Server is listening on {Server_IP} : {Server_PORT} ...")
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    print(f"Connecting to the server {Server_IP} : {Server_PORT} ...")
+    client.connect(Address)
 
     while True:
-        client_socket, client_address = server.accept()
-        print(f"New connection from {client_address}")
-        # Create a new thread to handle the client
-        client_thread = Thread(target=handle_client, args=(client_socket, client_address))
-        client_thread.start()
+        file_name = input("Enter the file name (or 'exit' to quit): ").strip()
+        client.send(file_name.encode())
+
+        if file_name.lower() == "exit":
+            print("Exiting...")
+            break
+
+        fragments = [None] * Fragment_Size
+        retry = 0
+
+        while True:
+            data = client.recv(Buffer_Size)
+            if not data:
+                break
+
+            # Check for server messages
+            if data.startswith(b"File not found"):
+                print("File not found on the server")
+                break
+            elif data.startswith(b"File sent successfully"):
+                print("File transfer completed successfully.")
+                break
+            elif data.startswith(b"Transmission failed"):
+                print("File transfer failed. The server could not send the file.")
+                break
+
+            # Unpack the header and fragment data
+            header = data[:4]
+            seq_num, checksum = struct.unpack("!HH", header)
+            fragment_data = data[4:]
+
+            # Verify the checksum
+            if verify_checksum(fragment_data, checksum):
+                print(f"Received fragment {seq_num}")
+                fragments[seq_num] = fragment_data
+                client.send(f"ACK:{seq_num}".encode())  # Send ACK to the server
+            else:
+                print(f"Fragment {seq_num} is corrupted.")
+                client.send(f"NACK:{seq_num}".encode())  # Send NACK to the server
+                retry += 1
+                if retry >= 5:
+                    print("Max retry reached. File transfer failed.")
+                    client.close()
+                    return
+
+        # Check if all fragments are received
+        if all(fragment is not None for fragment in fragments):
+            file_data = b"".join(fragments)  # Combine all fragments
+            with open(f"received_{file_name}", "wb") as file:
+                file.write(file_data)
+            print(f"File '{file_name}' reassembled and saved as 'received_{file_name}'.")
+        else:
+            print("File transfer incomplete. Some fragments are missing.")
+
+    client.close()
 
 if __name__ == "__main__":
     main()
