@@ -1,12 +1,13 @@
-import socket as socket
+import socket
 import struct
 
 # Constants
-Server_IP = socket.gethostbyname(socket.gethostname())  # Get the IP address of the server
-Server_PORT = 1234
+Server_IP = socket.gethostbyname(socket.gethostname())  # Automatically get the local IP address
+#Server_IP =  # real ip address uncomment and 
+Server_PORT = 4000
 Address = (Server_IP, Server_PORT)  # Tuple of the IP and the PORT
-Buffer_Size = 1024  # for sending/receiving data
-Fragment_Size = 4  # the fragment (segment) number.
+Buffer_Size = 1024  # Buffer size for sending/receiving data
+Fragment_Size = 4  # Number of fragments
 
 # Function to calculate checksum
 def calc_checksum(file):
@@ -38,11 +39,14 @@ def main():
             break
 
         fragments = [None] * Fragment_Size
-        retry = 0
 
         while True:
             data = client.recv(Buffer_Size)
             if not data:
+                break
+
+            if data == b"EOF":
+                print("File transfer completed successfully.")
                 break
 
             # Check for server messages
@@ -64,16 +68,12 @@ def main():
             # Verify the checksum
             if verify_checksum(fragment_data, checksum):
                 print(f"Received fragment {seq_num}")
-                fragments[seq_num] = fragment_data
+                if fragments[seq_num] is None:  # Avoid duplicate processing
+                    fragments[seq_num] = fragment_data
                 client.send(f"ACK:{seq_num}".encode())  # Send ACK to the server
             else:
                 print(f"Fragment {seq_num} is corrupted.")
                 client.send(f"NACK:{seq_num}".encode())  # Send NACK to the server
-                retry += 1
-                if retry >= 5:
-                    print("Max retry reached. File transfer failed.")
-                    client.close()
-                    return
 
         # Check if all fragments are received
         if all(fragment is not None for fragment in fragments):

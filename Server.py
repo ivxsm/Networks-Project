@@ -4,13 +4,15 @@ import os
 from threading import Thread
 
 # Constants
-Server_IP = socket.gethostbyname(socket.gethostname())  # Get the IP address of the server
-Server_PORT = 1234
+Server_IP = socket.gethostbyname(socket.gethostname())  # Automatically get the local IP address
+#Server_IP = '' real ip address uncomment 
+Server_PORT = 4000
 Address = (Server_IP, Server_PORT)  # Tuple of the IP and the PORT
-Buffer_Size = 1024  # for sending/receiving data
-Fragment_Size = 4  # the fragment (segment) number.
-Min_File_Size = 1  # the minimum size of the file
-Max_retry = 5  # the maximum number of retries
+Buffer_Size = 1024  # Buffer size for sending/receiving data
+Fragment_Size = 4  # Number of fragments (segments)
+Min_File_Size = 1  # Minimum size of the file
+Max_retry = 5  # Maximum number of retries
+Timeout = 2  # Timeout in seconds for retransmissions
 
 # Function to calculate checksum
 def checksum(file):
@@ -25,14 +27,14 @@ def checksum(file):
 
 # Function to split the file into segments
 def split_file(file):
-    file_data = open(file, "rb").read()  # read the file in binary mode
-    file_size = os.path.getsize(file)  # get the size of the file
-    inner_fragment_Size = file_size // Fragment_Size  # the size of each segment
-    segments = []  # list to store the segments
+    file_data = open(file, "rb").read()  # Read the file in binary mode
+    file_size = os.path.getsize(file)  # Get the size of the file
+    inner_fragment_size = file_size // Fragment_Size  # Size of each segment
+    segments = []  # List to store the segments
 
     for i in range(Fragment_Size):
-        start = i * inner_fragment_Size
-        end = (i + 1) * inner_fragment_Size if i != Fragment_Size - 1 else file_size
+        start = i * inner_fragment_size
+        end = (i + 1) * inner_fragment_size if i != Fragment_Size - 1 else file_size
         fragment = file_data[start:end]
         checksum_value = checksum(fragment)
         segments.append((i, checksum_value, fragment))
@@ -40,11 +42,11 @@ def split_file(file):
 
 # Function to handle each client connection
 def handle_client(client_socket, client_address):
-    print(f"Connection from {client_address} has been established!")
+    print(f"Connection from {client_address} established!")
     client_socket.send("Welcome to the server!".encode())
 
     while True:
-        file = client_socket.recv(Buffer_Size).decode().strip()  # receive the file name
+        file = client_socket.recv(Buffer_Size).decode().strip()  # Receive the file name
         if file.lower() == "exit":
             print(f"Client {client_address} requested to exit.")
             break
@@ -71,13 +73,17 @@ def handle_client(client_socket, client_address):
                 client_socket.send(message)
                 print(f"Sent fragment {seq_num} with checksum {checksum_value}")
 
-                ack = client_socket.recv(Buffer_Size).decode().strip()
-                if ack == f"ACK:{seq_num}":
-                    print(f"Fragment {seq_num} acknowledged by the client")
-                    break
-                else:
+                try:
+                    client_socket.settimeout(Timeout)  # Set timeout for acknowledgment
+                    ack = client_socket.recv(Buffer_Size).decode().strip()
+                    print(f"Received ACK: {ack}")
+
+                    if ack == f"ACK:{seq_num}":
+                        print(f"Fragment {seq_num} acknowledged by the client")
+                        break
+                except socket.timeout:
                     retry += 1
-                    print(f'Fragment {seq_num} not acknowledged by the client, retrying {retry} of {Max_retry}')
+                    print(f"Fragment {seq_num} not acknowledged by the client, retrying {retry} of {Max_retry}")
 
             if retry == Max_retry:
                 print(f"Fragment {seq_num} not acknowledged by the client, maximum retries reached")
@@ -87,6 +93,7 @@ def handle_client(client_socket, client_address):
 
         print(f"File {file} sent successfully")
         client_socket.send("File sent successfully".encode())
+        client_socket.send(b"EOF")  # Signal end of file transmission
 
     print(f"Closing connection with {client_address}")
     client_socket.close()
