@@ -2,8 +2,8 @@ import socket as socket
 import struct
 
 # Constants
-Server_IP = '127.0.0.1'  # Get the IP address of the server
-Server_PORT = 39996
+Server_IP = socket.gethostbyname(socket.gethostname()) # Get the IP address of the server
+Server_PORT = 4000
 Address = (Server_IP, Server_PORT)  # Tuple of the IP and the PORT
 Buffer_Size = 1024  # for sending/receiving data
 Fragment_Size = 4  # the fragment (segment) number.
